@@ -97,6 +97,14 @@
         .game-icon { font-size: 3em; display: block; margin-bottom: 8px; }
         .game-title { font-weight: bold; font-size: 1.1em; }
         .game-desc { font-size: 0.75em; opacity: 0.7; margin-top: 5px; }
+        .record-text {
+            font-size: 0.7rem;
+            margin-top: 8px;
+            color: #FF9800;
+            background: rgba(255,152,0,0.1);
+            border-radius: 20px;
+            padding: 4px;
+        }
 
         .game-screen {
             display: none;
@@ -257,7 +265,6 @@
             opacity: 0.6;
         }
 
-        /* Стили для новых игр */
         .shadow-game {
             display: flex;
             flex-wrap: wrap;
@@ -374,7 +381,7 @@
             <footer>🎉 Играй, слушай, побеждай!</footer>
         </div>
 
-        <!-- ИГРЫ ИЗ ПЕРВОГО САЙТА -->
+        <!-- ИГРЫ -->
         <div id="lettersGame" class="game-screen">
             <button class="back-btn" onclick="backToMenu()">← Назад</button>
             <div class="instruction">🔊 Нажми на букву, послушай звук и выбери правильный вариант!</div>
@@ -424,7 +431,6 @@
             <div class="options-grid" id="firstLetterOptions"></div>
         </div>
 
-        <!-- НОВЫЕ ИГРЫ ИЗ ВТОРОГО САЙТА -->
         <div id="findNumberGame" class="game-screen">
             <button class="back-btn" onclick="backToMenu()">← Назад</button>
             <div class="instruction">🔢 Найди нужную цифру!</div>
@@ -506,6 +512,76 @@
         </div>
     </div>
 
+    <!-- Модуль Firebase и работа с БД -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+        import { getDatabase, ref, get, set, child } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCalhXfYTKZgIUOkrgs6jFLsd-4MZcC4e4",
+            authDomain: "my-site-1f7c1.firebaseapp.com",
+            databaseURL: "https://my-site-1f7c1-default-rtdb.firebaseio.com",
+            projectId: "my-site-1f7c1",
+            storageBucket: "my-site-1f7c1.firebasestorage.app",
+            messagingSenderId: "711359917038",
+            appId: "1:711359917038:web:ab9d83242a4e5eb6aa7cff",
+            measurementId: "G-L7Q81E105B"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // Сохранить лучший результат для возраста и игры
+        window.saveBestScore = async (age, game, score) => {
+            if (!score && score !== 0) return;
+            try {
+                const scoreRef = ref(db, `bestScores/${age}/${game}`);
+                const snapshot = await get(scoreRef);
+                let best = snapshot.exists() ? snapshot.val() : 0;
+                if (score > best) {
+                    await set(scoreRef, score);
+                    console.log(`🎉 Новый рекорд для ${age}/${game}: ${score}`);
+                    // обновляем отображение на карточке, если меню открыто
+                    if (window.currentAge === age && window.refreshRecordsDisplay) {
+                        window.refreshRecordsDisplay(age, { [game]: score });
+                    }
+                }
+            } catch(e) { console.warn("Ошибка сохранения:", e); }
+        };
+
+        // Загрузить все лучшие результаты для возраста
+        window.loadBestScores = async (age) => {
+            try {
+                const scoresRef = ref(db, `bestScores/${age}`);
+                const snapshot = await get(scoresRef);
+                return snapshot.exists() ? snapshot.val() : {};
+            } catch(e) { console.warn("Ошибка загрузки:", e); return {}; }
+        };
+
+        // Обновить текст рекорда на карточке игры
+        window.refreshRecordsDisplay = async (age, partialRecords = null) => {
+            let records = partialRecords;
+            if (!records) records = await window.loadBestScores(age);
+            const gameCards = document.querySelectorAll('.game-card');
+            for (let card of gameCards) {
+                const gameAttr = card.getAttribute('data-game-id');
+                if (gameAttr && records[gameAttr] !== undefined) {
+                    let recordSpan = card.querySelector('.record-text');
+                    if (!recordSpan) {
+                        recordSpan = document.createElement('div');
+                        recordSpan.className = 'record-text';
+                        card.appendChild(recordSpan);
+                    }
+                    recordSpan.innerHTML = `🏆 Рекорд: ${records[gameAttr]} очков`;
+                }
+            }
+        };
+
+        // Экспортируем глобально
+        window.dbReady = true;
+        console.log("✅ Firebase подключена, база готова");
+    </script>
+
     <script>
         // ========== ОБЩИЕ ФУНКЦИИ ==========
         let currentAge = '3-4';
@@ -538,7 +614,8 @@
             }
         }
 
-        function showModal(title, stars, score, msg) {
+        // Модифицируем showModal – теперь вызывается через completeGameWithSave
+        function showModal(title, stars, score, msg, gameName = null) {
             document.getElementById('modalTitle').innerText = title;
             document.getElementById('modalStars').innerHTML = stars;
             document.getElementById('modalScore').innerHTML = score;
@@ -556,6 +633,14 @@
             document.querySelectorAll('.game-screen').forEach(s => s.classList.remove('active'));
             document.getElementById('mainMenu').style.display = 'block';
             currentGame = null;
+        }
+
+        // Универсальное завершение игры с сохранением рекорда
+        async function completeGameWithSave(gameId, score, stars, msg) {
+            if (window.saveBestScore && currentAge) {
+                await window.saveBestScore(currentAge, gameId, score);
+            }
+            showModal("Молодец!", stars, score, msg);
         }
 
         function startGame(game) {
@@ -579,7 +664,7 @@
             else if (game === 'alias') startAlias();
         }
 
-        // ========== ИГРЫ ИЗ ПЕРВОГО САЙТА (без звука ✅) ==========
+        // ========== ИГРЫ (механики без изменений, кроме вызовов completeGameWithSave) ==========
         const lettersData = ['А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З', 'И', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Э', 'Ю', 'Я'];
         const easyLetters = ['А', 'О', 'У', 'И', 'М', 'П', 'К', 'Т', 'С'];
         const animalsList = [
@@ -602,7 +687,6 @@
             return lettersData;
         }
 
-        // Буквы со звуком
         let lettersScore = 0, lettersRound = 1, currentLetter = null;
         function startLetters() { lettersScore = 0; lettersRound = 1; document.getElementById('lettersScore').innerText = '0'; document.getElementById('lettersRound').innerText = '1'; nextLetterRound(); }
         function nextLetterRound() {
@@ -633,8 +717,8 @@
                 document.getElementById('lettersScore').innerText = lettersScore;
                 document.getElementById('lettersRound').innerText = lettersRound;
                 createSparkles(btn);
-                speak('Верно!'); // вместо галочки
-                if (lettersRound > 10) showModal('Отлично!', '⭐⭐⭐', lettersScore, 'Ты знаешь буквы!');
+                speak('Верно!');
+                if (lettersRound > 10) completeGameWithSave('letters', lettersScore, '⭐⭐⭐', `Ты знаешь буквы! Твой счёт: ${lettersScore}`);
                 else setTimeout(nextLetterRound, 800);
             } else {
                 btn.classList.add('wrong');
@@ -643,7 +727,6 @@
             }
         }
 
-        // Найди животное
         let animalScore = 0, animalRound = 1, currentAnimal = null;
         function startAnimalWord() { animalScore = 0; animalRound = 1; document.getElementById('animalScore').innerText = '0'; document.getElementById('animalRound').innerText = '1'; nextAnimalRound(); }
         function nextAnimalRound() {
@@ -673,7 +756,7 @@
                 document.getElementById('animalRound').innerText = animalRound;
                 createSparkles(element);
                 speak(currentAnimal.sound);
-                if (animalRound > 10) showModal('Читатель!', '⭐⭐⭐', animalScore, 'Ты умеешь читать слова!');
+                if (animalRound > 10) completeGameWithSave('animalWord', animalScore, '⭐⭐⭐', `Ты умеешь читать слова! Счёт: ${animalScore}`);
                 else setTimeout(nextAnimalRound, 800);
             } else {
                 element.style.animation = 'shake 0.3s';
@@ -682,7 +765,6 @@
             }
         }
 
-        // Память (пары)
         let matchScore = 0, matchMoves = 0, matchCards = [], matchFlipped = [], matchLock = false;
         function startMatchPairs() {
             matchScore = 0; matchMoves = 0; matchFlipped = []; matchLock = false;
@@ -724,7 +806,7 @@
                     cardsDivs[a].classList.add('correct'); cardsDivs[b].classList.add('correct');
                     matchScore++; document.getElementById('matchScore').innerText = matchScore;
                     createSparkles(cardsDivs[a]); matchFlipped = []; matchLock = false;
-                    if (matchScore === pairsData.length) showModal('Победа!', '⭐⭐⭐', matchScore, 'Нашёл все пары!');
+                    if (matchScore === pairsData.length) completeGameWithSave('matchPairs', matchScore, '⭐⭐⭐', `Нашёл все пары! Счёт: ${matchScore}`);
                 } else {
                     setTimeout(() => {
                         cardsDivs[a].innerHTML = '?'; cardsDivs[b].innerHTML = '?';
@@ -736,7 +818,6 @@
             }
         }
 
-        // Слоги
         let syllableScore = 0, syllableRound = 1, currentSyl = null;
         function startSyllables() { syllableScore = 0; syllableRound = 1; document.getElementById('syllablesScore').innerText = '0'; document.getElementById('syllablesRound').innerText = '1'; nextSyllable(); }
         function nextSyllable() {
@@ -758,7 +839,7 @@
                         document.getElementById('syllablesScore').innerText = syllableScore;
                         document.getElementById('syllablesRound').innerText = syllableRound;
                         createSparkles(div);
-                        if (syllableRound > 10) showModal('Молодец!', '⭐⭐⭐', syllableScore, 'Ты читаешь слоги!');
+                        if (syllableRound > 10) completeGameWithSave('syllables', syllableScore, '⭐⭐⭐', `Ты читаешь слоги! Счёт: ${syllableScore}`);
                         else setTimeout(nextSyllable, 700);
                     } else { div.style.animation = 'shake 0.3s'; setTimeout(() => div.style.animation = '', 300); }
                 };
@@ -766,7 +847,6 @@
             });
         }
 
-        // Составь слово
         let buildScore = 0, buildRound = 1, buildCurrentWord = '', buildLettersArray = [], buildSelected = [];
         function startBuildWord() { buildScore = 0; buildRound = 1; document.getElementById('buildScore').innerText = '0'; document.getElementById('buildRound').innerText = '1'; nextBuildWord(); }
         function nextBuildWord() {
@@ -836,14 +916,13 @@
                 document.getElementById('buildRound').innerText = buildRound;
                 createSparkles(document.getElementById('checkBuildBtn'));
                 speak('Молодец');
-                if (buildRound > 8) showModal('Отлично!', '⭐⭐⭐', buildScore, 'Ты составляешь слова!');
+                if (buildRound > 8) completeGameWithSave('buildWord', buildScore, '⭐⭐⭐', `Ты составляешь слова! Счёт: ${buildScore}`);
                 else setTimeout(nextBuildWord, 1000);
             } else {
                 alert('Попробуй ещё! Составь слово правильно.');
             }
         }
 
-        // Первая буква
         let firstLetterScore = 0, firstLetterRound = 1, currentPicItem = null;
         function startFirstLetter() { firstLetterScore = 0; firstLetterRound = 1; document.getElementById('firstLetterScore').innerText = '0'; document.getElementById('firstLetterRound').innerText = '1'; nextFirstLetter(); }
         function nextFirstLetter() {
@@ -869,7 +948,7 @@
                         document.getElementById('firstLetterRound').innerText = firstLetterRound;
                         createSparkles(btn);
                         playLetterSound(currentPicItem.word[0]);
-                        if (firstLetterRound > 10) showModal('Умница!', '⭐⭐⭐', firstLetterScore, 'Знаешь первые буквы!');
+                        if (firstLetterRound > 10) completeGameWithSave('firstLetter', firstLetterScore, '⭐⭐⭐', `Знаешь первые буквы! Счёт: ${firstLetterScore}`);
                         else setTimeout(nextFirstLetter, 700);
                     } else { btn.classList.add('wrong'); setTimeout(() => btn.classList.remove('wrong'), 500); }
                 };
@@ -877,8 +956,7 @@
             });
         }
 
-        // ========== НОВЫЕ ИГРЫ (рабочие, без галочки) ==========
-        // Найди цифру
+        // Другие игры не требуют сохранения (они бесконечные или не имеют финального очка), но для единообразия оставим как есть
         let currentFindNumber = '5', findNumScore = 0;
         function startFindNumber() { findNumScore = 0; document.getElementById('findNumScore').innerText = '0'; newFindNumberTask(); }
         function newFindNumberTask() {
@@ -909,7 +987,6 @@
             speak(`Найди цифру ${currentFindNumber}`);
         }
 
-        // Найди машинку
         let vehiclesData = [
             { name: 'грузовик', emoji: '🚛', id: 'truck' },
             { name: 'легковая', emoji: '🚗', id: 'car' },
@@ -946,7 +1023,6 @@
             speak(`Найди ${currentVehicle.name}`);
         }
 
-        // Тени
         let shadowPairs = [
             { animal: '🐮 Корова', shadowEmoji: '🌑🐮', emoji: '🐮', idx: 0 },
             { animal: '🐔 Курица', shadowEmoji: '🌑🐔', emoji: '🐔', idx: 1 },
@@ -1001,7 +1077,6 @@
         }
         function resetShadows() { shadowState = []; buildShadowGame(); }
 
-        // Четвёртый лишний
         let oddSets = [
             { items: ['🍎', '🍌', '🍒', '🚗'], names: ['яблоко','банан','вишня','машина'], extra: 3, reason: 'машина — транспорт, остальное фрукты' },
             { items: ['🥕', '🍅', '🥒', '🍰'], names: ['морковь','помидор','огурец','торт'], extra: 3, reason: 'торт — десерт, а это овощи' },
@@ -1036,7 +1111,6 @@
         }
         function nextOddSet() { currentOddIdx = (currentOddIdx + 1) % oddSets.length; renderOddGame(); }
 
-        // Слова из слова
         const baseWordLetters = "КОСМОНАВТ";
         let foundWordsArr = [], wordBuilderScore = 0;
         function startWordBuilder() { wordBuilderScore = 0; foundWordsArr = []; document.getElementById('wordBuilderScore').innerText = '0'; document.getElementById('foundWordsList').innerHTML = ''; document.getElementById('wordMessage').innerHTML = ''; }
@@ -1068,7 +1142,6 @@
             document.getElementById('wordInput').value = '';
         }
 
-        // Сортировка
         let foodDB = [
             { name: 'Яблоко', emoji: '🍎', cat: 'fruit' }, { name: 'Груша', emoji: '🍐', cat: 'fruit' },
             { name: 'Морковь', emoji: '🥕', cat: 'vegetable' }, { name: 'Огурец', emoji: '🥒', cat: 'vegetable' },
@@ -1121,7 +1194,6 @@
         }
         function resetSorting() { unsortedFood = [...foodDB]; renderSortingGame(); }
 
-        // Таблица умножения
         let currentMath = { a: 12, b: 3, ans: 36 }, mathScore = 0, mathErrors = 0;
         function startMultiplication() { mathScore = 0; mathErrors = 0; document.getElementById('mathScore').innerText = '0'; document.getElementById('mathErrors').innerText = '0'; generateMath(); }
         function generateMath() {
@@ -1168,7 +1240,6 @@
         }
         function nextMathGame() { generateMath(); }
 
-        // Алиас
         let aliasWordsList = ['СОБАКА', 'КОШКА', 'ВЕЛОСИПЕД', 'ПИЦЦА', 'УЧИТЕЛЬ', 'САМОЛЁТ', 'РАДОСТЬ', 'МОРОЖЕНОЕ'];
         let aliasTimerInterval = null;
         function startAlias() { if (aliasTimerInterval) clearInterval(aliasTimerInterval); document.getElementById('aliasTimer').innerHTML = '⏱️ 60 сек'; randomAliasWord(); }
@@ -1192,15 +1263,15 @@
             }, 1000);
         }
 
-        // ========== МЕНЮ И ВОЗРАСТЫ ==========
-        function selectAge(age) {
+        // ========== МЕНЮ И ВОЗРАСТЫ (с загрузкой рекордов) ==========
+        async function selectAge(age) {
             currentAge = age;
             document.body.className = 'theme-' + age;
             document.querySelectorAll('.age-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.age === age));
-            renderGames();
+            await renderGames(); // дождёмся отрисовки и загрузим рекорды
         }
 
-        function renderGames() {
+        async function renderGames() {
             const container = document.getElementById('gamesContainer');
             let games = [];
             if (currentAge === '3-4') {
@@ -1239,14 +1310,30 @@
             container.innerHTML = '';
             const grid = document.createElement('div');
             grid.className = 'games-grid';
-            games.forEach(g => {
+            for (let g of games) {
                 const card = document.createElement('div');
                 card.className = 'game-card';
-                card.innerHTML = `<span class="game-icon">${g.icon}</span><div class="game-title">${g.name}</div><div class="game-desc">${g.desc || ''}</div>`;
+                card.setAttribute('data-game-id', g.game);
+                card.innerHTML = `<span class="game-icon">${g.icon}</span><div class="game-title">${g.name}</div><div class="game-desc">${g.desc || ''}</div><div class="record-text">🏆 Загрузка...</div>`;
                 card.onclick = () => startGame(g.game);
                 grid.appendChild(card);
-            });
+            }
             container.appendChild(grid);
+
+            // Загружаем рекорды из БД и обновляем карточки
+            if (window.loadBestScores) {
+                const records = await window.loadBestScores(currentAge);
+                for (let card of grid.children) {
+                    const gameId = card.getAttribute('data-game-id');
+                    if (records[gameId]) {
+                        const recordSpan = card.querySelector('.record-text');
+                        if (recordSpan) recordSpan.innerHTML = `🏆 Рекорд: ${records[gameId]} очков`;
+                    } else {
+                        const recordSpan = card.querySelector('.record-text');
+                        if (recordSpan) recordSpan.innerHTML = `✨ Нет рекорда`;
+                    }
+                }
+            }
         }
 
         function initAgeButtons() {
